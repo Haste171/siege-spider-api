@@ -1,9 +1,12 @@
+from logging import exception
+
 from database.handler import SessionLocal
 from database.models import SiegeBan, SiegeBanMetadata
 from datetime import datetime
 from dotenv import load_dotenv
 from services.ubisoft_handler import UbisoftHandler
 from services.webhook_agent import DiscordWebhookAgent
+from services.webhook_exception_handler import WebhookExceptionHandler
 import asyncio
 import json
 import logging
@@ -27,6 +30,7 @@ class UbisoftBanListener:
         self.session_id = session_id
         self.ticket = ticket
         self.webhook_agent = DiscordWebhookAgent(os.getenv("UBISOFT_BAN_DISCORD_WEBHOOK"))
+        self.webhook_exception_handler = WebhookExceptionHandler()
         self.ubisoft_handler = ubisoft_handler
 
     @staticmethod
@@ -77,14 +81,9 @@ class UbisoftBanListener:
 
         except Exception as e:
             logger.error(f"Error occurred: {e}")
-            self.webhook_agent.send_notification(
-                [
-                    {
-                        "title": "Error [Ban Alert Websocket Listener]",
-                        "description": f"```python\n{e}```",
-                        "color": 16734310
-                    }
-                ]
+            self.webhook_exception_handler.send_exception_alert(
+                title="Error [Ban Alert Websocket Listener]",
+                exception=e
             )
         finally:
             await self.ubisoft_handler.close()
@@ -195,14 +194,9 @@ async def run(ubisoft_handler):
         await ban_listener.connect_to_ban_websocket()
     except Exception as e:
         logger.error(f"Error occurred: {e}")
-        DiscordWebhookAgent(os.getenv("UBISOFT_BAN_DISCORD_WEBHOOK")).send_notification(
-            [
-                {
-                    "title": "Startup Error [Ban Alert Websocket Listener]",
-                    "description": f"```python\n{e}```",
-                    "color": 16734310
-                }
-            ]
+        WebhookExceptionHandler().send_exception_alert(
+            title="Startup Error [Ban Alert Websocket Listener]",
+            exception=e
         )
         raise e
 
