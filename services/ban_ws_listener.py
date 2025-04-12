@@ -1,4 +1,6 @@
-
+from database.handler import SessionLocal
+from database.models import SiegeBan, SiegeBanMetadata
+from datetime import datetime
 from dotenv import load_dotenv
 from services.ubisoft_handler import UbisoftHandler
 from services.webhook_agent import DiscordWebhookAgent
@@ -144,7 +146,42 @@ class UbisoftBanListener:
                 } for player in reformatted_dict.get("players")
             ]
         )
+        await self._send_to_db(reformatted_dict)
         return reformatted_dict
+
+    async def _send_to_db(self, ban_data: dict):
+        session = SessionLocal()
+        try:
+            for player in ban_data["players"]:
+                ban = SiegeBan(
+                    profile_id=player["profile_id"],
+                    uplay=player["uplay"],
+                    xbl=player["xbl"],
+                    psn=player["psn"],
+                    ban_reason=ban_data["ban_reason"],
+                )
+                session.add(ban)
+                session.flush()  # ensures ban.id is populated
+
+                metadata = SiegeBanMetadata(
+                    ban_id=ban.id,  # link to parent
+                    notification_type=ban_data["notification_type"],
+                    source_application_id=ban_data["source_application_id"],
+                    date_posted=self._convert_datestr_to_datetime(ban_data["date_posted"]),
+                    space_id=ban_data["space_id"],
+                )
+                session.add(metadata)
+
+            session.commit()
+        except Exception as e:
+            session.rollback()
+            logger.error(f"DB insert error: {e}")
+        finally:
+            session.close()
+
+    @staticmethod
+    def _convert_datestr_to_datetime(date_str: str) -> datetime:
+        return datetime.strptime(date_str, "%Y-%m-%dT%H:%M:%S.%fZ")
 
 async def run(ubisoft_handler):
     try:

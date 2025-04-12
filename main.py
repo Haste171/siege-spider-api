@@ -1,7 +1,6 @@
 from contextlib import asynccontextmanager
 from database import models
 from database.handler import engine
-from fastapi import BackgroundTasks
 from fastapi import FastAPI
 from services.ban_ws_listener import run as run_ban_websocket_listener
 from services.ubisoft_handler import UbisoftHandler

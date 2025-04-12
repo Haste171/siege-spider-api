@@ -17,15 +17,16 @@ class SiegeBan(Base):
     __tablename__ = "siege_bans"
     id = Column(String, primary_key=True, default=lambda: str(uuid.uuid4()), unique=True, index=True, nullable=False)
 
-    # These are the usernames at the time of the ban, this can change which is why we have their uuid as well.
+    # These are the usernames at the time of the ban, this can change which is why we have their uuid (profile id) as well.
+    profile_id = Column(String, index=True, nullable=False)
     uplay = Column(String, index=True)
-    psn = Column(String, index=True)
     xbl = Column(String, index=True)
+    psn = Column(String, index=True)
     ban_reason = Column(Integer, index=True)
     created_at = Column(DateTime(timezone=True), server_default=func.now())
     updated_at = Column(DateTime(timezone=True), onupdate=func.now())
 
-    cases = relationship('SiegeBanMetadata', back_populates='siegeban', cascade="all, delete-orphan")
+    ban_metadata = relationship('SiegeBanMetadata', back_populates='siegeban', cascade="all, delete-orphan")
 
 class SiegeBanMetadata(Base):
     __tablename__ = "siege_bans_metadata"
@@ -38,3 +39,5 @@ class SiegeBanMetadata(Base):
     space_id = Column(String, index=True)
     created_at = Column(DateTime(timezone=True), server_default=func.now())
     updated_at = Column(DateTime(timezone=True), onupdate=func.now())
+
+    siegeban = relationship('SiegeBan', back_populates='ban_metadata')
