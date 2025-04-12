@@ -57,3 +57,36 @@ async def lookup_bans_profile_id(profile_id: str, db: Session = Depends(get_db))
     if not bans:
         raise HTTPException(status_code=404, detail="No bans found for the provided profile ID.")
     return {"bans": bans}
+
+
+@router.get("/lookup/bans/{uplay}/uplay/metadata")
+async def lookup_bans_metadata_uplay(uplay: str, db: Session = Depends(get_db)):
+    # Query the SiegeBans table to retrieve the ban ID(s) for the given Uplay username.
+    ban_ids = db.query(SiegeBan.id).filter(SiegeBan.uplay.ilike(uplay.lower())).all()
+
+    if not ban_ids:
+        raise HTTPException(status_code=404, detail="No bans found for the provided Uplay username.")
+    # Extract the Ban IDs from the result
+    ban_ids = [ban_id[0] for ban_id in ban_ids]
+    # Query the SiegeBanMetadata table to retrieve metadata for the retrieved Ban IDs.
+    metadata = db.query(SiegeBanMetadata).filter(SiegeBanMetadata.ban_id.in_(ban_ids)).all()
+    if not metadata:
+        raise HTTPException(status_code=404, detail="No metadata found for the provided Uplay username.")
+    return {"metadata": metadata}
+
+
+@router.get("/lookup/bans/{profile_id}/profile_id/metadata")
+async def lookup_bans_metadata_profile_id(profile_id: str, db: Session = Depends(get_db)):
+    # will need to get ban id from siege bans table then use that id to get corresponding metadata:
+    # Query the SiegeBans table to retrieve the ban ID(s) for the given profile ID.
+    ban_ids = db.query(SiegeBan.id).filter(SiegeBan.profile_id == profile_id).all()
+
+    if not ban_ids:
+        raise HTTPException(status_code=404, detail="No bans found for the provided profile ID.")
+    # Extract the Ban IDs from the result
+    ban_ids = [ban_id[0] for ban_id in ban_ids]
+    # Query the SiegeBanMetadata table to retrieve metadata for the retrieved Ban IDs.
+    metadata = db.query(SiegeBanMetadata).filter(SiegeBanMetadata.ban_id.in_(ban_ids)).all()
+    if not metadata:
+        raise HTTPException(status_code=404, detail="No metadata found for the provided profile ID.")
+    return {"metadata": metadata}
