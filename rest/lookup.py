@@ -42,9 +42,10 @@ async def lookup_profile_id(request: Request, uplay: str):
 
     return ubisoft_handler.format_player(player)
 
+
 @router.get("/lookup/bans/{uplay}/uplay")
 async def lookup_bans_uplay(uplay: str, db: Session = Depends(get_db)):
-    bans = db.query(SiegeBan).filter(SiegeBan.uplay == uplay).all()
+    bans = db.query(SiegeBan).filter(SiegeBan.uplay.ilike(uplay.lower())).all()
     if not bans:
         raise HTTPException(status_code=404, detail="No bans found for the provided uplay username.")
     return {"bans": bans}
