@@ -1,0 +1,25 @@
+[tool.poetry]
+name = "siege-spider"
+version = "0.1.0"
+description = ""
+authors = ["Your Name <34923485+Haste171@users.noreply.github.com>"]
+readme = "README.md"
+
+[tool.poetry.dependencies]
+python = "^3.11"
+fastapi = "^0.115.12"
+sqlalchemy = "^2.0.40"
+dotenv = "^0.9.9"
+siegeapi = "^6.3.4"
+certifi = "^2025.1.31"
+requests = "^2.32.3"
+websockets = "^15.0.1"
+psycopg2 = "^2.9.10"
+psycopg2-binary = "^2.9.10"
+alembic = "^1.15.2"
+uvicorn = "^0.34.0"
+
+
+[build-system]
+requires = ["poetry-core"]
+build-backend = "poetry.core.masonry.api"
