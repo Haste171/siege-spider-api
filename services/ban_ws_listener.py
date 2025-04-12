@@ -54,21 +54,22 @@ class UbisoftBanListener:
                 "Ubi-SessionId": self.session_id,
                 "Authorization": self.ticket,
             }
-            async def connect_and_receive(ws_url, ws_headers):
-                import ssl
-                ssl_context = ssl.create_default_context()
-                ssl_context.check_hostname = False
-                ssl_context.verify_mode = ssl.CERT_NONE
 
-                async with websockets.connect(ws_url, additional_headers=ws_headers, ssl=ssl_context) as ws:
-                    logger.info("Connected to Ubisoft WebSocket")
-                    while True:
-                        response = await ws.recv()
-                        await self._ban_alerts_parser(json.loads(response))
+            import ssl
+            ssl_context = ssl.create_default_context()
+            ssl_context.check_hostname = False
+            ssl_context.verify_mode = ssl.CERT_NONE
 
-            asyncio.get_event_loop().run_until_complete(
-                connect_and_receive(websocket_server_link, ubi_headers)
-            )
+            async with websockets.connect(
+                    websocket_server_link,
+                    additional_headers=ubi_headers,
+                    ssl=ssl_context
+            ) as ws:
+                logger.info("Connected to Ubisoft WebSocket")
+                while True:
+                    response = await ws.recv()
+                    await self._ban_alerts_parser(json.loads(response))
+
         except Exception as e:
             logger.error(f"Error occurred: {e}")
             self.webhook_agent.send_notification(
