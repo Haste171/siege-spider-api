@@ -9,7 +9,7 @@ import os
 from dotenv import load_dotenv
 load_dotenv()
 
-DB_URL = os.getenv("DATABASE_URL")
+DB_URL = os.getenv("DB_URL")
 
 # this is the Alembic Config object, which provides
 # access to the values within the .ini file in use.
