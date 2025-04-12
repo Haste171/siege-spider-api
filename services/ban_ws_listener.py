@@ -158,7 +158,7 @@ class UbisoftBanListener:
                     uplay=player["uplay"],
                     xbl=player["xbl"],
                     psn=player["psn"],
-                    ban_reason=ban_data["ban_reason"],
+                    ban_reason=ban_data["ban_reason_id"],
                 )
                 session.add(ban)
                 session.flush()  # ensures ban.id is populated
