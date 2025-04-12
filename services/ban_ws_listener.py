@@ -1,3 +1,4 @@
+
 from dotenv import load_dotenv
 from services.ubisoft_handler import UbisoftHandler
 from services.webhook_agent import DiscordWebhookAgent
@@ -6,6 +7,7 @@ import json
 import logging
 import os
 import requests
+import ssl
 import websockets
 
 load_dotenv()
@@ -55,11 +57,12 @@ class UbisoftBanListener:
                 "Authorization": self.ticket,
             }
 
-            import ssl
+            # Create SSL context directly in this function
             ssl_context = ssl.create_default_context()
             ssl_context.check_hostname = False
             ssl_context.verify_mode = ssl.CERT_NONE
 
+            # Connect to websocket directly without nesting a function or running a new event loop
             async with websockets.connect(
                     websocket_server_link,
                     additional_headers=ubi_headers,
@@ -115,7 +118,7 @@ class UbisoftBanListener:
             "date_posted": websocket_output.get("datePosted"),
             "space_id": websocket_output.get("spaceId"),
         }
-        logger.info(f"Ban Alerts [{len(reformatted_dict.get('players'))}]: {reformatted_dict.get('reason')}")
+        logger.info(f"Ban Alerts [{len(reformatted_dict.get('players'))}]: {reformatted_dict.get('ban_reason')}")
         self.webhook_agent.send_notification(
             [
                 {
@@ -151,6 +154,7 @@ async def run(ubisoft_handler):
 
         ban_listener = UbisoftBanListener(email, password, ubisoft_handler)
 
+        # Simply await the connect_to_ban_websocket method instead of trying to run a new event loop
         await ban_listener.connect_to_ban_websocket()
     except Exception as e:
         logger.error(f"Error occurred: {e}")
@@ -175,4 +179,3 @@ async def main():
 
 if __name__ == "__main__":
     asyncio.run(main())
-
