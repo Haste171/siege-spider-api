@@ -1,8 +1,9 @@
-from database.models import SiegeBan, SiegeBanMetadata
 from database.handler import get_db
+from database.models import SiegeBan, SiegeBanMetadata
 from fastapi import APIRouter, Depends, Request
-import siegeapi
+from fastapi.exceptions import HTTPException
 from sqlalchemy.orm import Session
+import siegeapi
 router = APIRouter()
 
 @router.get("/lookup/profile_id/{profile_id}")
@@ -41,6 +42,17 @@ async def lookup_profile_id(request: Request, uplay: str):
 
     return ubisoft_handler.format_player(player)
 
-# @router.get("/lookup/bans/{id}/profile_id")
-# async def lookup_bans_profile_id(profile_id: str, db: Session = Depends(get_db)):
-#     pass
+@router.get("/lookup/bans/{uplay}/uplay")
+async def lookup_bans_uplay(uplay: str, db: Session = Depends(get_db)):
+    bans = db.query(SiegeBan).filter(SiegeBan.uplay == uplay).all()
+    if not bans:
+        raise HTTPException(status_code=404, detail="No bans found for the provided uplay username.")
+    return {"bans": bans}
+
+
+@router.get("/lookup/bans/{profile_id}/profile_id")
+async def lookup_bans_profile_id(profile_id: str, db: Session = Depends(get_db)):
+    bans = db.query(SiegeBan).filter(SiegeBan.profile_id == profile_id).all()
+    if not bans:
+        raise HTTPException(status_code=404, detail="No bans found for the provided profile ID.")
+    return {"bans": bans}
