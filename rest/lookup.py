@@ -180,3 +180,50 @@ async def lookup_bans_metadata_profile_id(request: Request, profile_id: str, db:
             e_str=e_str
         )
         raise Exception(e_str)
+
+@router.get("/bans")
+async def get_all_bans(
+        request: Request,
+        db: Session = Depends(get_db),
+        page: int = 1,
+        limit: int = 25
+):
+    try:
+        # Calculate offset based on page and limit
+        offset = (page - 1) * limit
+
+        # Get total count for pagination info
+        total_bans = db.query(SiegeBan).count()
+
+        # Get paginated bans
+        bans = db.query(SiegeBan).offset(offset).limit(limit).all()
+
+        # If no bans are found, return empty list but not an error
+        if not bans:
+            return {
+                "bans": [],
+                "pagination": {
+                    "total": total_bans,
+                    "page": page,
+                    "limit": limit,
+                    "pages": (total_bans + limit - 1) // limit  # Ceiling division
+                }
+            }
+
+        return {
+            "bans": bans,
+            "pagination": {
+                "total": total_bans,
+                "page": page,
+                "limit": limit,
+                "pages": (total_bans + limit - 1) // limit  # Ceiling division
+            }
+        }
+    except Exception as e:
+        e_str = f"Exception: {str(e)}\n\nRequest data: {request.url}\nMethod: {request.method}\nHeaders: {dict(request.headers)}\nClient: {request.client}"
+        logger.error(f"Error [Get All Bans]: {e_str}")
+        WebhookExceptionHandler().send_exception_alert(
+            title="Error [Get All Bans]",
+            e_str=e_str
+        )
+        raise Exception(e_str)
