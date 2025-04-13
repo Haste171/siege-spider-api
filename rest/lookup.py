@@ -2,6 +2,7 @@ from database.handler import get_db
 from database.models import SiegeBan, SiegeBanMetadata
 from fastapi import APIRouter, Depends, Request
 from fastapi.exceptions import HTTPException
+from services.user.token import get_current_user
 from services.webhook_exception_handler import WebhookExceptionHandler
 from sqlalchemy.orm import Session
 import logging
@@ -12,7 +13,7 @@ logging.basicConfig(level=logging.INFO)
 router = APIRouter()
 
 @router.get("/lookup/uplay/{uplay}")
-async def lookup_profile_id(request: Request, uplay: str):
+async def lookup_profile_id(request: Request, uplay: str, current_user = Depends(get_current_user)):
     try:
         ubisoft_handler = request.app.state.ubisoft_handler
 
@@ -49,7 +50,7 @@ async def lookup_profile_id(request: Request, uplay: str):
         raise Exception(e_str)
 
 @router.get("/lookup/bans/{uplay}/uplay")
-async def lookup_bans_uplay(request: Request, uplay: str, db: Session = Depends(get_db)):
+async def lookup_bans_uplay(request: Request, uplay: str, db: Session = Depends(get_db), current_user = Depends(get_current_user)):
     try:
         bans = db.query(SiegeBan).filter(SiegeBan.uplay.ilike(uplay.lower())).all()
         if not bans or len(bans) == 0:
@@ -65,7 +66,7 @@ async def lookup_bans_uplay(request: Request, uplay: str, db: Session = Depends(
         raise Exception(e_str)
 
 @router.get("/lookup/bans/{uplay}/uplay/metadata")
-async def lookup_bans_metadata_uplay(request: Request, uplay: str, db: Session = Depends(get_db)):
+async def lookup_bans_metadata_uplay(request: Request, uplay: str, db: Session = Depends(get_db), current_user = Depends(get_current_user)):
     try:
         # Query the SiegeBans table to retrieve the ban ID(s) for the given Uplay username.
         ban_ids = db.query(SiegeBan.id).filter(SiegeBan.uplay.ilike(uplay.lower())).all()
@@ -89,7 +90,7 @@ async def lookup_bans_metadata_uplay(request: Request, uplay: str, db: Session =
         raise Exception(e_str)
 
 @router.get("/lookup/profile_id/{profile_id}")
-async def lookup_profile_id(request: Request, profile_id: str):
+async def lookup_profile_id(request: Request, profile_id: str, current_user = Depends(get_current_user)):
     try:
         ubisoft_handler = request.app.state.ubisoft_handler
 
@@ -130,7 +131,7 @@ async def lookup_profile_id(request: Request, profile_id: str):
         raise Exception(e_str)
 
 @router.get("/lookup/bans/{profile_id}/profile_id")
-async def lookup_bans_profile_id(request: Request, profile_id: str, db: Session = Depends(get_db)):
+async def lookup_bans_profile_id(request: Request, profile_id: str, db: Session = Depends(get_db), current_user = Depends(get_current_user)):
     try:
         # Clean up profile_id (e.g., remove spaces, ensure proper matching) -- avoids wildcards
         profile_id = profile_id.strip()
@@ -157,7 +158,7 @@ async def lookup_bans_profile_id(request: Request, profile_id: str, db: Session 
         raise Exception(e_str)
 
 @router.get("/lookup/bans/{profile_id}/profile_id/metadata")
-async def lookup_bans_metadata_profile_id(request: Request, profile_id: str, db: Session = Depends(get_db)):
+async def lookup_bans_metadata_profile_id(request: Request, profile_id: str, db: Session = Depends(get_db), current_user = Depends(get_current_user)):
     try:
         # will need to get ban id from siege bans table then use that id to get corresponding metadata:
         # Query the SiegeBans table to retrieve the ban ID(s) for the given profile ID.
@@ -185,8 +186,9 @@ async def lookup_bans_metadata_profile_id(request: Request, profile_id: str, db:
 async def get_all_bans(
         request: Request,
         db: Session = Depends(get_db),
+        current_user = Depends(get_current_user),
         page: int = 1,
-        limit: int = 25
+        limit: int = 25,
 ):
     try:
         # Calculate offset based on page and limit

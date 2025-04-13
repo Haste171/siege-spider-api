@@ -54,5 +54,8 @@ SessionLocal = sessionmaker(bind=engine)
 async def root():
     return {"message": "Welcome to Siege Spider API!"}
 
+from rest.user import router as user_router
 from rest.lookup import router as lookup_router
+
+app.include_router(user_router)
 app.include_router(lookup_router)
