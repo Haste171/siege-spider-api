@@ -1,4 +1,5 @@
 from dotenv import load_dotenv
+from services.linked_account_parser import LinkedAccountParser
 import aiohttp
 import asyncio
 import certifi
@@ -15,6 +16,7 @@ logging.basicConfig(level=logging.INFO)
 class UbisoftHandler:
     def __init__(self) -> None:
         self.auth = None
+        self.linked_account_parser = LinkedAccountParser()
 
     async def initialize(self, email: str, password: str) -> None:
         # Create SSL context & connector with certifi certificates inside an event loop
@@ -82,21 +84,22 @@ class UbisoftHandler:
             "abandons": profile.abandons,
         }
 
-    @staticmethod
-    def format_player(player: siegeapi.Player):
+    def format_player(self, player: siegeapi.Player):
         return {
             "player": {
                 "name": player.name,
                 "profile_id": player.id,
                 "uuid": player.uid,
                 "profile_pic_url": player.profile_pic_url,
+                "locker_link": f"https://siege.locker/view?uid={player.id}",
                 "linked_accounts": [
                     {
                         "profile_id": acc.profile_id,
                         "user_id": acc.user_id,
                         "platform_type": acc.platform_type,
                         "id_on_platform": acc.id_on_platform,
-                        "name_on_platform": acc.name_on_platform
+                        "name_on_platform": acc.name_on_platform,
+                        "info_link": self._get_info_link(acc),
                     }
                     for acc in player.linked_accounts
                 ],
@@ -123,6 +126,22 @@ class UbisoftHandler:
                 }
             }
         }
+
+    def _get_info_link(self, acc):
+        if acc.platform_type == "steam":
+            return f"https://steamid.pro/lookup/{self.linked_account_parser.resolve_steam_vanity_url(acc.id_on_platform)}"
+        elif acc.platform_type == "xbl":
+            return f"https://www.xbox.com/en-US/play/user/{acc.name_on_platform}"
+        elif acc.platform_type == "psn":
+            return f"https://www.psntools.com/psn/checker/{acc.name_on_platform}"
+        elif acc.platform_type == "amazon":
+            return f"https://www.amazon.com/gp/profile/{acc.name_on_platform}/ref=cm_cr_dp_d_gw_tr?ie=UTF8"
+        else:
+            return None
+
+    @staticmethod
+    def _get_locker_link( profile_id: str):
+        return f"https://siege.locker/view?uid={profile_id}"
 
     async def close(self):
         if self.auth is None:
