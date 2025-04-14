@@ -2,9 +2,11 @@ from database.handler import get_db
 from database.models import SiegeBan, SiegeBanMetadata
 from fastapi import APIRouter, Depends, Request
 from fastapi.exceptions import HTTPException
+from pydantic import BaseModel
 from services.user.token import get_current_user
 from services.webhook_exception_handler import WebhookExceptionHandler
 from sqlalchemy.orm import Session
+from typing import List, Dict
 import logging
 import siegeapi
 
@@ -39,7 +41,6 @@ async def lookup_profile_id(request: Request, uplay: str, current_user = Depends
                 e_str=e_str
             )
             raise Exception(e_str)
-
     except Exception as e:
         e_str = f"Exception: {str(e)}\n\nRequest data: {request.url}\nMethod: {request.method}\nHeaders: {dict(request.headers)}\nClient: {request.client}"
         logger.error(f"Error [Uplay Lookup: {e_str}")
@@ -178,6 +179,39 @@ async def lookup_bans_metadata_profile_id(request: Request, profile_id: str, db:
         logger.error(f"Error [Profile ID Ban Metadata Lookup]: {e_str}")
         WebhookExceptionHandler().send_exception_alert(
             title="Error [Profile ID Ban Metadata Lookup]",
+            e_str=e_str
+        )
+        raise Exception(e_str)
+
+class PlayerIdentifier(BaseModel):
+    identifiers: List[Dict[str, int]]
+
+@router.post("/lookup/match")
+async def lookup_match_players(
+        request: Request,
+        data: PlayerIdentifier,
+        db: Session = Depends(get_db)
+):
+    try:
+        ubisoft_handler = request.app.state.ubisoft_handler
+        players = []
+        for item in data.identifiers:
+            for key, value in item.items():
+                player: siegeapi.Player = await ubisoft_handler.lookup_via_profile_id(key)
+                await player.load_linked_accounts()
+                await player.load_persona()
+                await player.load_playtime()
+                await player.load_progress()
+                await player.load_ranked_v2()
+                data_to_add = ubisoft_handler.format_player(player)
+                data_to_add["team"] = value
+                players.append(data_to_add)
+        return players
+    except Exception as e:
+        e_str = f"Exception: {str(e)}\n\nRequest data: {request.url}\nMethod: {request.method}\nHeaders: {dict(request.headers)}\nClient: {request.client}"
+        logger.error(f"Error [Match Lookup]: {e_str}")
+        WebhookExceptionHandler().send_exception_alert(
+            title="Error [Match Lookup]",
             e_str=e_str
         )
         raise Exception(e_str)
