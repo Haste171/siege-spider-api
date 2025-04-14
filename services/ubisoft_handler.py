@@ -6,6 +6,7 @@ import certifi
 import logging
 import os
 import siegeapi
+from services.siegeapipatched import SiegeAPIPatched, ExpiredAuthException
 import ssl
 
 load_dotenv()
@@ -24,13 +25,26 @@ class UbisoftHandler:
         connector = aiohttp.TCPConnector(ssl=ssl_context)
         session = aiohttp.ClientSession(connector=connector)
         logger.info("Initiating Ubisoft API session...")
-        self.auth = siegeapi.Auth(email, password, session=session)
+        self.auth = SiegeAPIPatched(email, password, session=session)
 
     async def convert_uplay_to_profile_id(self, uplay: str) -> str:
         if self.auth is None:
             raise Exception("UbisoftHandler.initialize() must be called before this method!")
         try:
-            player = await self.auth.get_player(name=uplay, platform="uplay")
+            retries = 2
+            while retries > 0:
+                try:
+                    player = await self.auth.get_player(name=uplay, platform="uplay")
+                    break
+                except ExpiredAuthException as e:
+                    await self.initialize(
+                        os.getenv("UBISOFT_EMAIL"),
+                        os.getenv("UBISOFT_PASSWORD")
+                    )
+                    retries -= 1
+                    if retries == 0:
+                        raise e
+                
         except siegeapi.FailedToConnect as e:
             logger.error("Invalid credentials passed to UbisoftHandler.initialize()!")
             raise Exception(f"Siege API Error: {e}")
