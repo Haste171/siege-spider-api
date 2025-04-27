@@ -1,12 +1,13 @@
 from dotenv import load_dotenv
 from services.linked_account_parser import LinkedAccountParser
+from services.siegeapipatched import SiegeAPIPatched, ExpiredAuthException
 import aiohttp
 import asyncio
 import certifi
 import logging
+import math
 import os
 import siegeapi
-from services.siegeapipatched import SiegeAPIPatched, ExpiredAuthException
 import ssl
 
 load_dotenv()
@@ -75,8 +76,7 @@ class UbisoftHandler:
 
         return player
 
-    @staticmethod
-    def format_profile(profile):
+    def format_profile(self, profile, add_risk_score=False):
         return {
             "max_rank_id": profile.max_rank_id,
             "max_rank": profile.max_rank,
@@ -96,7 +96,143 @@ class UbisoftHandler:
             "losses": profile.losses,
             "win_loss_ratio": profile.wins / profile.losses if profile.losses != 0 else 0.0,
             "abandons": profile.abandons,
+            "risk_score": self.calculate_cheater_risk(profile) if add_risk_score else None
         }
+
+    @staticmethod
+    def calculate_cheater_risk(profile):
+        """
+        Calculate a risk score (0-100) indicating the likelihood that a player is cheating.
+
+        Args:
+            profile: Player profile object containing match statistics and rank information
+
+        Returns:
+            int: Risk score between 0-100, with higher values indicating higher suspicion
+        """
+        # 1. Basic calculations and data preparation
+        total_matches = profile.wins + profile.losses + profile.abandons
+        if total_matches < 5:
+            return 15  # Minimum baseline for too few matches to make reliable assessment
+
+        kd_ratio = profile.kills / max(1, profile.deaths)
+        wl_ratio = profile.wins / max(1, profile.losses)
+
+        # Extract rank category
+        rank_categories = ["Copper", "Bronze", "Silver", "Gold", "Platinum", "Emerald", "Diamond", "Champions"]
+        rank_category = profile.rank.split()[0] if hasattr(profile, 'rank') and profile.rank else "Gold"
+
+        # 2. Match count confidence scaling
+        # Low match counts reduce confidence in all suspicious patterns
+        match_count_factor = min(1.0, (total_matches - 5) / 25)
+
+        # 3. Performance Anomaly Detection
+        # Base KD expectation is 1.0 across all ranks
+        expected_kd = 1.0
+        universal_ceiling = 2.2  # Universal suspicious ceiling
+
+        # KD deviation thresholds by rank (how far above 1.0 is suspicious)
+        kd_deviation_threshold = {
+            "Copper": 1.5, "Bronze": 1.3, "Silver": 1.1, "Gold": 0.9,
+            "Platinum": 0.7, "Emerald": 0.5, "Diamond": 0.3, "Champions": 0.2
+        }.get(rank_category, 1.0)
+
+        # Apply match count scaling to threshold (more lenient with fewer matches)
+        adjusted_threshold = kd_deviation_threshold * (1.5 - (match_count_factor * 0.5))
+
+        # Calculate KD anomaly score
+        if kd_ratio <= expected_kd:
+            kd_anomaly = 0.0  # Below average KD is never suspicious
+        else:
+            kd_anomaly = max(0, (kd_ratio - expected_kd) / adjusted_threshold)
+
+        # Apply universal ceiling with match count consideration
+        if kd_ratio > universal_ceiling and total_matches > 10:
+            # Calculate how much player exceeds the universal ceiling
+            ceiling_excess = (kd_ratio - universal_ceiling) / universal_ceiling
+            # Scale ceiling_excess penalty by match count
+            ceiling_excess *= match_count_factor
+            # Add to anomaly score
+            kd_anomaly += ceiling_excess * 2.0
+
+        # Apply rank-sensitive scaling
+        rank_sensitivity = {
+            "Copper": 0.5, "Bronze": 0.6, "Silver": 0.8, "Gold": 1.0,
+            "Platinum": 1.3, "Emerald": 1.5, "Diamond": 1.7, "Champions": 2.0
+        }.get(rank_category, 1.0)
+
+        # Apply rank sensitivity to anomaly calculation
+        kd_anomaly *= rank_sensitivity
+
+        # Factor in win-loss ratio (with rank sensitivity)
+        expected_wl = 1.0
+        performance_anomaly = kd_anomaly * (1 + max(0, wl_ratio - expected_wl) * 0.5)
+
+        # 4. Match Experience Factor
+        # More matches expected for higher ranks
+        expected_matches = max(15, 20 + ((profile.rank_id * 4) - 40))
+
+        if total_matches >= expected_matches:
+            match_experience_factor = 0.0  # Not suspicious if they've played enough matches
+        else:
+            match_deficit_ratio = (expected_matches - total_matches) / expected_matches
+            match_experience_factor = match_deficit_ratio * 0.7  # Scale down the impact
+
+        # 5. Rank Efficiency - FIXED to prevent false positives for high ranks
+        starting_points = 1000
+        points_gained = profile.rank_points - starting_points
+        points_per_match = points_gained / max(1, total_matches)
+
+        # Improved expected points calculation that scales properly with rank
+        base_expected_points = 25 + (5000 / (profile.rank_id + 50))
+        rank_multiplier = 1.0 + (0.5 * (profile.rank_id / 40))  # Higher ranks can earn more per match
+        expected_points = base_expected_points * rank_multiplier
+
+        # Calculate rank efficiency and apply scaling to prevent extreme values
+        if points_per_match <= expected_points:
+            rank_efficiency = 0.0  # Not suspicious if not gaining points too quickly
+        else:
+            rank_efficiency = min(2.0, (points_per_match / expected_points) - 1.0) * 0.5
+
+        # 6. Metric Consistency
+        kd_win_alignment = abs((kd_ratio - expected_kd) - (wl_ratio - expected_wl))
+        metric_consistency = min(1.0, kd_win_alignment / (1 + (total_matches / 50)))
+
+        # 7. Calculate base risk score with appropriate weights
+        # Normalized to be on a more controlled scale
+        cheater_risk = (
+                (performance_anomaly * 0.35) +
+                (match_experience_factor * 0.25) +
+                (rank_efficiency * 0.30) +
+                (metric_consistency * 0.10)
+        )
+
+        # 8. Apply safeguards against false positives
+        # Players with below average KD are extremely unlikely to be cheating
+        if kd_ratio < 0.9 and total_matches > 20:
+            cheater_risk *= 0.3  # Significant reduction for below-average KD
+        elif kd_ratio < 1.0 and total_matches > 30:
+            cheater_risk *= 0.5  # Moderate reduction for average KD
+
+        # 9. Apply confidence factor based on match count
+        confidence_factor = min(1.0, (total_matches / 30))
+
+        # Scale down confidence more aggressively for very low match counts
+        if total_matches < 10:
+            confidence_factor *= 0.7
+
+        adjusted_risk = cheater_risk * confidence_factor
+
+        # 10. Scale to 0-100 range with better control to prevent maxing out
+        # Divide by 1.5 to ensure normal values don't reach 100 too easily
+        final_score = min(100, max(0, (adjusted_risk / 1.5) * 100))
+
+        # 11. Final sanity check for edge cases
+        # Normal players shouldn't exceed 50 unless extremely suspicious
+        if kd_ratio < 1.3 and wl_ratio < 1.3 and total_matches > 50:
+            final_score = min(final_score, 40)
+
+        return int(final_score)
 
     def format_player(self, player: siegeapi.Player):
         return {
@@ -135,8 +271,10 @@ class UbisoftHandler:
                     "xp_to_level_up": player.xp_to_level_up,
                 },
                 "stats": {
-                    mode: UbisoftHandler.format_profile(getattr(player, f"{mode}_profile"))
-                    for mode in ["ranked", "standard", "casual", "event", "warmup"]
+                    mode: self.format_profile(
+                        getattr(player, f"{mode}_profile"),
+                        add_risk_score=True if mode == "ranked" else False
+                    ) for mode in ["ranked", "standard", "casual", "event", "warmup"]
                 }
             }
         }
