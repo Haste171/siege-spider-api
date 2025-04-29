@@ -242,6 +242,7 @@ class UbisoftHandler:
                 "uuid": player.uid,
                 "profile_pic_url": player.profile_pic_url,
                 "locker_link": f"https://siege.locker/view?uid={player.id}",
+                "statscc_link": f"https://stats.cc/siege/{player.name}/{player.id}",
                 "linked_accounts": [
                     {
                         "profile_id": acc.profile_id,
