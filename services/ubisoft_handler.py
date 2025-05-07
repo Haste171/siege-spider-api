@@ -1,3 +1,4 @@
+from datetime import datetime
 from dotenv import load_dotenv
 from services.linked_account_parser import LinkedAccountParser
 from services.siegeapipatched import SiegeAPIPatched, ExpiredAuthException
@@ -246,6 +247,7 @@ class UbisoftHandler:
                 "locker_link": f"https://siege.locker/view?uid={player.id}",
                 "statscc_link": f"https://stats.cc/siege/{player.name}/{player.id}",
                 "twitch_info": self.get_twitch_info(player.id),
+                "current_platform_info": self.get_platform_info(player.id),
                 "linked_accounts": [
                     {
                         "profile_id": acc.profile_id,
@@ -282,6 +284,53 @@ class UbisoftHandler:
                 }
             }
         }
+
+    def get_platform_info(self, uuid: str):
+        if self.auth is None:
+            raise Exception("UbisoftHandler.initialize() must be called before this method!")
+
+        R6_PLATFORMS = {
+            'e3d5ea9e-50bd-43b7-88bf-39794f4e3d40': 'uplay',
+            '6e3c99c9-6c3f-43f4-b4f6-f1a3143f2764': 'ps5',
+            '76f580d5-7f50-47cc-bbc1-152d000bfe59': 'xbox_scarlett',
+            '4008612d-3baf-49e4-957a-33066726a7bc': 'xbox_one',
+            'fb4cc4c9-2063-461d-a1e8-84a7d36525fc': 'ps4',
+        }
+
+        PROFILE_IDS = [uuid]
+
+        def get_last_used_app_per_profile(applications):
+            latest_apps = {}
+            for app in applications:
+                profile_id = app["profileId"]
+                session_date = datetime.fromisoformat(app["lastSessionDate"].replace("Z", "+00:00"))
+                if profile_id not in latest_apps or session_date > latest_apps[profile_id][1]:
+                    latest_apps[profile_id] = (app["applicationId"], session_date)
+
+            return {
+                "platform": R6_PLATFORMS.get(app_id, "Unknown")
+                for profile_id, (app_id, _) in latest_apps.items()
+            }
+
+        app_ids = ",".join(R6_PLATFORMS.keys())
+        url = (
+            f"https://public-ubiservices.ubi.com/v3/profiles/applications"
+            f"?profileIds={','.join(PROFILE_IDS)}&applicationIds={app_ids}"
+        )
+
+        headers = {
+            "User-Agent": "UbiServices_SDK_2020.Release.58_PC64_ansi_static",
+            "Content-Type": "application/json; charset=UTF-8",
+            'Ubi-AppId': '2c2d31af-4ee4-4049-85dc-00dc74aef88f',
+            "Ubi-SessionId": self.auth.get_session_id(),
+            "Authorization": f"Ubi_v1 t={self.auth.key}"
+        }
+
+        response = requests.get(url, headers=headers)
+        apps = response.json().get("applications", [])
+
+        result = get_last_used_app_per_profile(apps)
+        return result
 
     def get_twitch_info(self, uuid: str):
         if self.auth is None:
