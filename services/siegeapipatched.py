@@ -21,3 +21,15 @@ class SiegeAPIPatched(Auth):
             if "HTTP 401" in str(e) and retries < self.MAX_TOTAL_RETRIES:
                 raise ExpiredAuthException("Refresh of auth is required!")
             raise e
+
+    def get_app_id(self):
+        return self.appid
+
+    def get_token(self):
+        return self.token
+
+    def get_session_id(self):
+        return self.sessionid
+
+    def get_key(self):
+        return self.key
