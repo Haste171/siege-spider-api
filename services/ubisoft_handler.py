@@ -1,12 +1,13 @@
 from dotenv import load_dotenv
 from services.linked_account_parser import LinkedAccountParser
 from services.siegeapipatched import SiegeAPIPatched, ExpiredAuthException
+from services.twitch_handler import TwitchHandler
 import aiohttp
 import asyncio
 import certifi
 import logging
-import math
 import os
+import requests
 import siegeapi
 import ssl
 
@@ -19,6 +20,7 @@ class UbisoftHandler:
     def __init__(self) -> None:
         self.auth = None
         self.linked_account_parser = LinkedAccountParser()
+        self.twitch_handler = TwitchHandler()
 
     async def initialize(self, email: str, password: str) -> None:
         # Create SSL context & connector with certifi certificates inside an event loop
@@ -243,6 +245,7 @@ class UbisoftHandler:
                 "profile_pic_url": player.profile_pic_url,
                 "locker_link": f"https://siege.locker/view?uid={player.id}",
                 "statscc_link": f"https://stats.cc/siege/{player.name}/{player.id}",
+                "twitch_info": self.get_twitch_info(player.id),
                 "linked_accounts": [
                     {
                         "profile_id": acc.profile_id,
@@ -280,17 +283,103 @@ class UbisoftHandler:
             }
         }
 
-    def _get_info_link(self, acc):
-        if acc.platform_type == "steam":
-            return f"https://steamid.pro/lookup/{self.linked_account_parser.resolve_steam_vanity_url(acc.id_on_platform)}"
-        elif acc.platform_type == "xbl":
-            return f"https://www.xbox.com/en-US/play/user/{acc.name_on_platform}"
-        elif acc.platform_type == "psn":
-            return f"https://www.psntools.com/psn/checker/{acc.name_on_platform}"
-        elif acc.platform_type == "amazon":
-            return f"https://www.amazon.com/gp/profile/{acc.name_on_platform}/ref=cm_cr_dp_d_gw_tr?ie=UTF8"
-        else:
+    def get_twitch_info(self, uuid: str):
+        if self.auth is None:
+            raise Exception("UbisoftHandler.initialize() must be called before this method!")
+
+        url = "https://public-ubiservices.ubi.com/v1/profiles/me/uplay/graphql"
+
+        headers = {
+            "User-Agent": "UbiServices_SDK_2020.Release.58_PC64_ansi_static",
+            "Content-Type": "application/json; charset=UTF-8",
+            "Ubi-AppId": self.auth.get_app_id(),
+            "Ubi-SessionId": self.auth.get_session_id(),
+            "Authorization": f"Ubi_v1 t={self.auth.key}"
+        }
+
+        payload = {
+            "operationName": "GetMultipleUserProfiles",
+            "variables": {
+                "userIds": [uuid]
+            },
+            "query": """query GetMultipleUserProfiles($userIds: [String!]!) {
+                users(userIds: $userIds) {
+                    ...ProfileFragment
+                }
+            }
+            fragment ProfileFragment on User {
+                id
+                userId
+                avatarUrl
+                name
+                level
+                onlineStatus
+                games(filterBy: {isOwned: true}) { totalCount }
+                lastPlayedGame {
+                    node {
+                        id
+                        name
+                        bannerUrl: backgroundUrl
+                        platform {
+                            id
+                            applicationId
+                            name
+                            type
+                        }
+                    }
+                }
+                currentOnlineGame {
+                    node {
+                        id
+                        name
+                        bannerUrl: backgroundUrl
+                        platform {
+                            id
+                            applicationId
+                            name
+                            type
+                        }
+                    }
+                }
+                networks {
+                    edges {
+                        node {
+                            id
+                            publicCodeName
+                        }
+                        meta {
+                            id
+                            name
+                        }
+                    }
+                }
+            }"""
+        }
+
+        response = requests.post(url, headers=headers, json=payload)
+        data = response.json()
+        networks = data.get("data").get("users")[0].get("networks").get("edges")
+        if networks is None:
             return None
+
+        for edge in networks:
+            if edge.get("node").get("publicCodeName") == "TWITCH":
+                twitch_username = edge.get("meta").get("name")
+                return self.twitch_handler.check_stream_data(twitch_username)
+
+        return None
+
+    def _get_info_link(self, acc):
+            if acc.platform_type == "steam":
+                return f"https://steamid.pro/lookup/{self.linked_account_parser.resolve_steam_vanity_url(acc.id_on_platform)}"
+            elif acc.platform_type == "xbl":
+                return f"https://www.xbox.com/en-US/play/user/{acc.name_on_platform}"
+            elif acc.platform_type == "psn":
+                return f"https://www.psntools.com/psn/checker/{acc.name_on_platform}"
+            elif acc.platform_type == "amazon":
+                return f"https://www.amazon.com/gp/profile/{acc.name_on_platform}/ref=cm_cr_dp_d_gw_tr?ie=UTF8"
+            else:
+                return None
 
     @staticmethod
     def _get_locker_link( profile_id: str):
