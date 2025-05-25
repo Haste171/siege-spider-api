@@ -191,7 +191,7 @@ async def run(ubisoft_handler):
         ban_listener = UbisoftBanListener(email, password, ubisoft_handler)
 
         # Simply await the connect_to_ban_websocket method instead of trying to run a new event loop
-        await ban_listener.connect_to_ban_websocket()
+        # await ban_listener.connect_to_ban_websocket()
     except Exception as e:
         logger.error(f"Error occurred: {e}")
         WebhookExceptionHandler().send_exception_alert(
