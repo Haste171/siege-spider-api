@@ -35,7 +35,8 @@ async def lifespan(app: FastAPI):
     app.state.ubisoft_handler = ubisoft_handler
 
     # Start ban listener
-    task = asyncio.create_task(run_ban_websocket_listener(ubisoft_handler))
+    # task = asyncio.create_task(run_ban_websocket_listener(ubisoft_handler))
+    task = None
     try:
         yield
     finally:
