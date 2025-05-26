@@ -8,7 +8,7 @@ from services.webhook_exception_handler import WebhookExceptionHandler
 from sqlalchemy.orm import Session
 from typing import List, Dict
 import logging
-import siegeapi
+from wrapper.models import Player
 
 logger = logging.getLogger(__name__)
 logging.basicConfig(level=logging.INFO)
@@ -19,28 +19,9 @@ async def lookup_profile_id(request: Request, uplay: str, current_user = Depends
     try:
         ubisoft_handler = request.app.state.ubisoft_handler
 
-        player: siegeapi.Player = await ubisoft_handler.lookup_via_uplay(uplay)
-
-        await player.load_linked_accounts()
-        await player.load_persona()
-        await player.load_playtime()
-        await player.load_progress()
-        await player.load_ranked_v2()
+        player: Player = await ubisoft_handler.lookup_via_uplay(uplay)
 
         return ubisoft_handler.format_player(player)
-    except siegeapi.InvalidRequest as e:
-        if "no results" in str(e).lower():
-            return HTTPException(status_code=404, detail="Player not found for the provided Uplay username.")
-        elif "missing resource" in str(e).lower():
-            return HTTPException(status_code=404, detail="Player not found for the provided Uplay username.")
-        else:
-            e_str = f"Exception: {str(e)}\n\nRequest data: {request.url}\nMethod: {request.method}\nHeaders: {dict(request.headers)}\nClient: {request.client}"
-            logger.error(f"Error [Uplay Lookup]: {e_str}")
-            WebhookExceptionHandler().send_exception_alert(
-                title="Error [Uplay Lookup]",
-                e_str=e_str
-            )
-            raise Exception(e_str)
     except Exception as e:
         e_str = f"Exception: {str(e)}\n\nRequest data: {request.url}\nMethod: {request.method}\nHeaders: {dict(request.headers)}\nClient: {request.client}"
         logger.error(f"Error [Uplay Lookup: {e_str}")
@@ -95,33 +76,9 @@ async def lookup_profile_id(request: Request, profile_id: str, current_user = De
     try:
         ubisoft_handler = request.app.state.ubisoft_handler
 
-        player: siegeapi.Player = await ubisoft_handler.lookup_via_profile_id(profile_id)
-
-        await player.load_linked_accounts()
-        await player.load_persona()
-        await player.load_playtime()
-        await player.load_progress()
-        await player.load_ranked_v2()
-        # await player.load_operators(op_about=False)
-        # await player.load_skill_records()
-        # await player.load_summaries()
-        # await player.load_trends()
-        # await player.load_weapons()
+        player: Player = await ubisoft_handler.lookup_via_profile_id(profile_id)
 
         return ubisoft_handler.format_player(player)
-    except siegeapi.InvalidRequest as e:
-        if "no results" in str(e).lower():
-            return HTTPException(status_code=404, detail="Player not found for the provided profile ID.")
-        elif "missing resource" in str(e).lower():
-            return HTTPException(status_code=404, detail="Player not found for the provided profile ID.")
-        else:
-            e_str = f"Exception: {str(e)}\n\nRequest data: {request.url}\nMethod: {request.method}\nHeaders: {dict(request.headers)}\nClient: {request.client}"
-            logger.error(f"Error [Profile ID Lookup]: {e_str}")
-            WebhookExceptionHandler().send_exception_alert(
-                title="Error [Profile ID Lookup]",
-                e_str=e_str
-            )
-            raise e
     except Exception as e:
         e_str = f"Exception: {str(e)}\n\nRequest data: {request.url}\nMethod: {request.method}\nHeaders: {dict(request.headers)}\nClient: {request.client}"
         logger.error(f"Error [Profile ID Lookup]: {e_str}")
@@ -197,12 +154,7 @@ async def lookup_match_players(
         players = []
         for item in data.identifiers:
             for key, value in item.items():
-                player: siegeapi.Player = await ubisoft_handler.lookup_via_profile_id(key)
-                await player.load_linked_accounts()
-                await player.load_persona()
-                await player.load_playtime()
-                await player.load_progress()
-                await player.load_ranked_v2()
+                player: Player = await ubisoft_handler.lookup_via_profile_id(key)
                 data_to_add = ubisoft_handler.format_player(player)
                 data_to_add["team"] = value
                 players.append(data_to_add)

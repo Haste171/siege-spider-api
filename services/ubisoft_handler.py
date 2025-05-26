@@ -1,16 +1,12 @@
-from datetime import datetime
 from dotenv import load_dotenv
 from services.linked_account_parser import LinkedAccountParser
-from services.siegeapipatched import SiegeAPIPatched, ExpiredAuthException
 from services.twitch_handler import TwitchHandler
-import aiohttp
+from typing import List
+from wrapper.client import UbisoftClient
+from wrapper.models import LinkedAccount, Player
 import asyncio
-import certifi
 import logging
 import os
-import requests
-import siegeapi
-import ssl
 
 load_dotenv()
 
@@ -19,64 +15,21 @@ logging.basicConfig(level=logging.INFO)
 
 class UbisoftHandler:
     def __init__(self) -> None:
-        self.auth = None
         self.linked_account_parser = LinkedAccountParser()
         self.twitch_handler = TwitchHandler()
+        ubisoft_email = os.getenv("UBISOFT_EMAIL")
+        ubisoft_password = os.getenv("UBISOFT_PASSWORD")
+        self.client = None
 
-    async def initialize(self, email: str, password: str) -> None:
-        # Create SSL context & connector with certifi certificates inside an event loop
-        ssl_context = ssl.create_default_context(cafile=certifi.where())
-        connector = aiohttp.TCPConnector(ssl=ssl_context)
-        session = aiohttp.ClientSession(connector=connector)
-        logger.info("Initiating Ubisoft API session...")
-        self.auth = SiegeAPIPatched(email, password, session=session)
+    async def initialize(self, email: str, password: str):
+        self.client = UbisoftClient(email=email, password=password)
 
-    async def convert_uplay_to_profile_id(self, uplay: str) -> str:
-        if self.auth is None:
-            raise Exception("UbisoftHandler.initialize() must be called before this method!")
-        try:
-            retries = 2
-            while retries > 0:
-                try:
-                    player = await self.auth.get_player(name=uplay, platform="uplay")
-                    break
-                except ExpiredAuthException as e:
-                    await self.initialize(
-                        os.getenv("UBISOFT_EMAIL"),
-                        os.getenv("UBISOFT_PASSWORD")
-                    )
-                    retries -= 1
-                    if retries == 0:
-                        raise e
-                
-        except siegeapi.FailedToConnect as e:
-            logger.error("Invalid credentials passed to UbisoftHandler.initialize()!")
-            raise Exception(f"Siege API Error: {e}")
-
-        return player.uid
-
-    async def lookup_via_profile_id(self, profile_id: str) -> siegeapi.Player:
-        if self.auth is None:
-            raise Exception("UbisoftHandler.initialize() must be called before this method!")
-
-        try:
-            player = await self.auth.get_player(uid=profile_id)
-        except siegeapi.FailedToConnect as e:
-            logger.error("Invalid credentials passed to UbisoftHandler.initialize()!")
-            raise Exception(f"Siege API Error: {e}")
-
+    async def lookup_via_profile_id(self, profile_id: str) -> Player:
+        player = await self.client.get_player(uid=profile_id, platform="uplay")
         return player
 
-    async def lookup_via_uplay(self, uplay: str) -> siegeapi.Player:
-        if self.auth is None:
-            raise Exception("UbisoftHandler.initialize() must be called before this method!")
-
-        try:
-            player = await self.auth.get_player(name=uplay, platform="uplay")
-        except siegeapi.FailedToConnect as e:
-            logger.error("Invalid credentials passed to UbisoftHandler.initialize()!")
-            raise Exception(f"Siege API Error: {e}")
-
+    async def lookup_via_uplay(self, uplay: str) -> Player:
+        player = await self.client.get_player(name=uplay, platform="uplay")
         return player
 
     def format_profile(self, profile, add_risk_score=False):
@@ -237,7 +190,7 @@ class UbisoftHandler:
 
         return int(final_score)
 
-    def format_player(self, player: siegeapi.Player):
+    def format_player(self, player: Player):
         return {
             "player": {
                 "name": player.name,
@@ -246,8 +199,8 @@ class UbisoftHandler:
                 "profile_pic_url": player.profile_pic_url,
                 "locker_link": f"https://siege.locker/view?uid={player.id}",
                 "statscc_link": f"https://stats.cc/siege/{player.name}/{player.id}",
-                "twitch_info": self.get_twitch_info(player.id),
-                "current_platform_info": self.get_platform_info(player.id),
+                "twitch_info": self.get_twitch_info(player.linked_accounts),
+                "current_platform_info": player.current_platform_info,
                 "linked_accounts": [
                     {
                         "profile_id": acc.profile_id,
@@ -285,137 +238,12 @@ class UbisoftHandler:
             }
         }
 
-    def get_platform_info(self, uuid: str):
-        if self.auth is None:
-            raise Exception("UbisoftHandler.initialize() must be called before this method!")
-
-        R6_PLATFORMS = {
-            'e3d5ea9e-50bd-43b7-88bf-39794f4e3d40': 'uplay',
-            '6e3c99c9-6c3f-43f4-b4f6-f1a3143f2764': 'ps5',
-            '76f580d5-7f50-47cc-bbc1-152d000bfe59': 'xbox_scarlett',
-            '4008612d-3baf-49e4-957a-33066726a7bc': 'xbox_one',
-            'fb4cc4c9-2063-461d-a1e8-84a7d36525fc': 'ps4',
-        }
-
-        PROFILE_IDS = [uuid]
-
-        def get_last_used_app_per_profile(applications):
-            latest_apps = {}
-            for app in applications:
-                profile_id = app["profileId"]
-                session_date = datetime.fromisoformat(app["lastSessionDate"].replace("Z", "+00:00"))
-                if profile_id not in latest_apps or session_date > latest_apps[profile_id][1]:
-                    latest_apps[profile_id] = (app["applicationId"], session_date)
-
-            return {
-                "platform": R6_PLATFORMS.get(app_id, "Unknown")
-                for profile_id, (app_id, _) in latest_apps.items()
-            }
-
-        app_ids = ",".join(R6_PLATFORMS.keys())
-        url = (
-            f"https://public-ubiservices.ubi.com/v3/profiles/applications"
-            f"?profileIds={','.join(PROFILE_IDS)}&applicationIds={app_ids}"
-        )
-
-        headers = {
-            "User-Agent": "UbiServices_SDK_2020.Release.58_PC64_ansi_static",
-            "Content-Type": "application/json; charset=UTF-8",
-            'Ubi-AppId': '2c2d31af-4ee4-4049-85dc-00dc74aef88f',
-            "Ubi-SessionId": self.auth.get_session_id(),
-            "Authorization": f"Ubi_v1 t={self.auth.key}"
-        }
-
-        response = requests.get(url, headers=headers)
-        apps = response.json().get("applications", [])
-
-        result = get_last_used_app_per_profile(apps)
-        return result
-
-    def get_twitch_info(self, uuid: str):
-        if self.auth is None:
-            raise Exception("UbisoftHandler.initialize() must be called before this method!")
-
-        url = "https://public-ubiservices.ubi.com/v1/profiles/me/uplay/graphql"
-
-        headers = {
-            "User-Agent": "UbiServices_SDK_2020.Release.58_PC64_ansi_static",
-            "Content-Type": "application/json; charset=UTF-8",
-            "Ubi-AppId": self.auth.get_app_id(),
-            "Ubi-SessionId": self.auth.get_session_id(),
-            "Authorization": f"Ubi_v1 t={self.auth.key}"
-        }
-
-        payload = {
-            "operationName": "GetMultipleUserProfiles",
-            "variables": {
-                "userIds": [uuid]
-            },
-            "query": """query GetMultipleUserProfiles($userIds: [String!]!) {
-                users(userIds: $userIds) {
-                    ...ProfileFragment
-                }
-            }
-            fragment ProfileFragment on User {
-                id
-                userId
-                avatarUrl
-                name
-                level
-                onlineStatus
-                games(filterBy: {isOwned: true}) { totalCount }
-                lastPlayedGame {
-                    node {
-                        id
-                        name
-                        bannerUrl: backgroundUrl
-                        platform {
-                            id
-                            applicationId
-                            name
-                            type
-                        }
-                    }
-                }
-                currentOnlineGame {
-                    node {
-                        id
-                        name
-                        bannerUrl: backgroundUrl
-                        platform {
-                            id
-                            applicationId
-                            name
-                            type
-                        }
-                    }
-                }
-                networks {
-                    edges {
-                        node {
-                            id
-                            publicCodeName
-                        }
-                        meta {
-                            id
-                            name
-                        }
-                    }
-                }
-            }"""
-        }
-
-        response = requests.post(url, headers=headers, json=payload)
-        data = response.json()
-        networks = data.get("data").get("users")[0].get("networks").get("edges")
-        if networks is None:
+    def get_twitch_info(self, linked_accounts: List[LinkedAccount]):
+        if linked_accounts is None:
             return None
-
-        for edge in networks:
-            if edge.get("node").get("publicCodeName") == "TWITCH":
-                twitch_username = edge.get("meta").get("name")
-                return self.twitch_handler.check_stream_data(twitch_username)
-
+        usernames = [item.name_on_platform for item in linked_accounts if item.platform_type == "twitch"]
+        if len(usernames) > 0:
+            return self.twitch_handler.check_stream_data(usernames[0])
         return None
 
     def _get_info_link(self, acc):
@@ -435,21 +263,13 @@ class UbisoftHandler:
         return f"https://siege.locker/view?uid={profile_id}"
 
     async def close(self):
-        if self.auth is None:
-            return
-        await self.auth.close()
+        await self.client.close()
 
 async def main():
-    ubisoft_email = os.getenv("UBISOFT_EMAIL")
-    ubisoft_password = os.getenv("UBISOFT_PASSWORD")
+
     ubi_handler = UbisoftHandler()
 
-    await ubi_handler.initialize(ubisoft_email, ubisoft_password)
-
-    uid = await ubi_handler.convert_uplay_to_profile_id("Vertigo.._")
-    print(f"Player UID: {uid}")
-
-    player = await ubi_handler.lookup_via_profile_id(uid)
+    player = await ubi_handler.lookup_via_uplay("Vertigo.._")
     print(f"Player name: {player.name}")
 
     await ubi_handler.close()
