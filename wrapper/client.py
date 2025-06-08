@@ -14,7 +14,9 @@ from wrapper.helpers import (
     get_xp_to_next_lvl,
     get_rank_constants,
     get_rank_from_mmr,
-    season_id_to_code
+    season_id_to_code,
+    deserialize_player,
+    serialize
 )
 from wrapper.constants import (
     BASIC_APP_ID,
@@ -29,17 +31,20 @@ import aiohttp
 import asyncio
 import base64
 import dataclasses
+from dataclasses import asdict, is_dataclass
 import json
 import os
+import hashlib
 from urllib import parse
 
 load_dotenv()
 
 class UbisoftClient:
-    def __init__(self, email: str, password: str):
+    def __init__(self, email: str, password: str, redis_client: Optional = None):
         self.email = email
         self.password = password
         self.session = aiohttp.ClientSession()
+        self.redis = redis_client
         self.creds_path: str = f"{os.getcwd()}/creds/"
 
     def get_basic_token(self) -> str:
@@ -142,6 +147,22 @@ class UbisoftClient:
          get_twitch: bool = True,
          get_current_platform: bool = True
     ) -> Player:
+
+        # Build cache key
+        key = None
+        if self.redis:
+            key_data = {
+                "uid": uid,
+            }
+            key = "player:" + hashlib.sha256(json.dumps(key_data, sort_keys=True).encode()).hexdigest()
+
+            # Try Redis cache
+            cached = self.redis.cache_for_key(key, lambda: None)
+            if cached:
+                print(f"Cache hit on {uid}")
+                return deserialize_player(cached)
+
+        # Not cached, make the full request
         auth = await self.fetch_auth_model_basic(BASIC_APP_ID)
         headers = {
             "Authorization": f"Ubi_v1 t={auth.ticket}",
@@ -195,7 +216,53 @@ class UbisoftClient:
                 event_profile=ranked_profiles_data.event_profile,
                 current_platform_info=current_platform_info
             )
+
+            if self.redis and key:
+                try:
+                    self.redis.redis.setex(key, 900, json.dumps(serialize(model)))
+                except Exception as e:
+                    print(e)
+                    pass  # silent fail on cache store
+
             return model
+
+    @staticmethod
+    def serialize(obj):
+        if isinstance(obj, list):
+            return [serialize(item) for item in obj]
+        elif is_dataclass(obj):
+            return {k: serialize(v) for k, v in asdict(obj).items()}
+        return obj
+
+    @staticmethod
+    def deserialize_player(data: dict) -> Player:
+        return Player(
+            id=data["id"],
+            uid=data["uid"],
+            profile_pic_url_146=data["profile_pic_url_146"],
+            profile_pic_url_256=data["profile_pic_url_256"],
+            profile_pic_url_500=data["profile_pic_url_500"],
+            profile_pic_url=data["profile_pic_url"],
+            linked_accounts=[LinkedAccount(**a) for a in data["linked_accounts"]],
+            name=data["name"],
+            persona=Persona(**data["persona"]) if data["persona"] else None,
+            level=data["level"],
+            xp=data["xp"],
+            total_xp=data["total_xp"],
+            xp_to_level_up=data["xp_to_level_up"],
+            total_time_played=data["total_time_played"],
+            total_time_played_hours=data["total_time_played_hours"],
+            pvp_time_played=data["pvp_time_played"],
+            pve_time_played=data["pve_time_played"],
+            standard_profile=FullProfile(**data["standard_profile"]) if data["standard_profile"] else None,
+            unranked_profile=FullProfile(**data["unranked_profile"]) if data["unranked_profile"] else None,
+            ranked_profile=FullProfile(**data["ranked_profile"]) if data["ranked_profile"] else None,
+            casual_profile=FullProfile(**data["casual_profile"]) if data["casual_profile"] else None,
+            warmup_profile=FullProfile(**data["warmup_profile"]) if data["warmup_profile"] else None,
+            event_profile=FullProfile(**data["event_profile"]) if data["event_profile"] else None,
+            current_platform_info=CurrentPlatformInfo(**data["current_platform_info"]) if data["current_platform_info"] else None,
+        )
+
 
     async def get_linked_accounts(self, profile_id: str, get_twitch=True) -> List[LinkedAccount]:
         auth = await self.fetch_auth_model_basic(BASIC_APP_ID)
@@ -596,7 +663,7 @@ async def main():
     # Examples
     ubisoft_email = os.getenv("UBISOFT_EMAIL")
     ubisoft_password = os.getenv("UBISOFT_PASSWORD")
-    client = UbisoftClient(email=ubisoft_email, password=ubisoft_password)
+    client = UbisoftClient(email=ubisoft_email, password=ubisoft_password, redis_client=None)
     profile_id = "adb38455-fb57-47cb-9c7b-720a4f19e834"
 
     player = await client.get_player(name="Ext", platform="uplay")

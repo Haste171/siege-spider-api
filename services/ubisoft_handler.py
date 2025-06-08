@@ -5,6 +5,7 @@ from typing import List
 from wrapper.client import UbisoftClient
 from wrapper.models import LinkedAccount, Player
 from services.statscc_handler import StatsCCHandler
+from services.redis_client import RedisClient
 import asyncio
 import logging
 import os
@@ -24,7 +25,7 @@ class UbisoftHandler:
         self.client = None
 
     async def initialize(self, email: str, password: str):
-        self.client = UbisoftClient(email=email, password=password)
+        self.client = UbisoftClient(email=email, password=password, redis_client=RedisClient())
 
     async def lookup_via_profile_id(self, profile_id: str) -> Player:
         player = await self.client.get_player(uid=profile_id, platform="uplay")
