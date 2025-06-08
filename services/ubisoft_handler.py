@@ -9,6 +9,7 @@ from services.redis_client import RedisClient
 import asyncio
 import logging
 import os
+import json
 
 load_dotenv()
 
@@ -22,10 +23,11 @@ class UbisoftHandler:
         self.statscc_handler = StatsCCHandler()
         ubisoft_email = os.getenv("UBISOFT_EMAIL")
         ubisoft_password = os.getenv("UBISOFT_PASSWORD")
+        self.redis_client = RedisClient()
         self.client = None
 
     async def initialize(self, email: str, password: str):
-        self.client = UbisoftClient(email=email, password=password, redis_client=RedisClient())
+        self.client = UbisoftClient(email=email, password=password, redis_client=self.redis_client)
 
     async def lookup_via_profile_id(self, profile_id: str) -> Player:
         player = await self.client.get_player(uid=profile_id, platform="uplay")
@@ -243,22 +245,55 @@ class UbisoftHandler:
         }
 
     def get_rep_gg_status(self, profile_id: str):
+        key = f"repgg:{profile_id}"
+
+        if self.redis_client:
+            cached = self.redis_client.cache_for_key(key, lambda: None)
+            if cached:
+                logger.info(f"[repgg] Cache hit on {profile_id}")
+                if cached.get("profileBans"):
+                    result = cached["profileBans"][0]
+                    return result
+
         try:
             response = self.statscc_handler.fetch_by_profile_id(profile_id)
+            if self.redis_client:
+                self.redis_client.redis.setex(key, 900, json.dumps(response))
             if response.get("profileBans"):
-                if response.get("profileBans")[0]:
-                    return response.get("profileBans")[0]
+                result = response["profileBans"][0]
+                return result
         except Exception as e:
             logger.error(f"Encountered exception when attempting to fetch info from stats.cc (profile id: {profile_id}). Error: \n\n{e}")
 
-
     def get_twitch_info(self, linked_accounts: List[LinkedAccount]):
-        if linked_accounts is None:
+        if not linked_accounts:
             return None
-        usernames = [item.name_on_platform for item in linked_accounts if item.platform_type == "twitch"]
-        if len(usernames) > 0:
-            return self.twitch_handler.check_stream_data(usernames[0])
-        return None
+
+        twitch_users = [acc.name_on_platform for acc in linked_accounts if acc.platform_type == "twitch"]
+        if not twitch_users:
+            return None
+
+        twitch_username = twitch_users[0]
+        stream_key = f"twitch:stream_data:{twitch_username}"
+
+        # Check stream cache
+        if self.redis_client:
+            cached_stream = self.redis_client.cache_for_key(stream_key, lambda: None)
+            if cached_stream:
+                return cached_stream
+
+        try:
+            # Fetch live data
+            response = self.twitch_handler.check_stream_data(twitch_username)
+
+            if self.redis_client:
+                # Cache stream data
+                self.redis_client.redis.setex(stream_key, 900, json.dumps(response))
+
+            return response
+        except Exception as e:
+            logger.error(f"Error fetching Twitch stream data for {twitch_username}: {e}")
+            return None
 
     def _get_info_link(self, acc):
             if acc.platform_type == "steam":
