@@ -4,6 +4,7 @@ from services.twitch_handler import TwitchHandler
 from typing import List
 from wrapper.client import UbisoftClient
 from wrapper.models import LinkedAccount, Player
+from services.statscc_handler import StatsCCHandler
 import asyncio
 import logging
 import os
@@ -17,6 +18,7 @@ class UbisoftHandler:
     def __init__(self) -> None:
         self.linked_account_parser = LinkedAccountParser()
         self.twitch_handler = TwitchHandler()
+        self.statscc_handler = StatsCCHandler()
         ubisoft_email = os.getenv("UBISOFT_EMAIL")
         ubisoft_password = os.getenv("UBISOFT_PASSWORD")
         self.client = None
@@ -197,7 +199,8 @@ class UbisoftHandler:
                 "profile_id": player.id,
                 "uuid": player.uid,
                 "profile_pic_url": player.profile_pic_url,
-                "locker_link": f"https://siege.locker/view?uid={player.id}",
+                "reputation_gg_status": self.get_rep_gg_status(player.id),
+                "r6_tracker_link": f"https://r6.tracker.network/r6siege/profile/ubi/{player.name}/overview",
                 "statscc_link": f"https://stats.cc/siege/{player.name}/{player.id}",
                 "twitch_info": self.get_twitch_info(player.linked_accounts),
                 "current_platform_info": player.current_platform_info,
@@ -237,6 +240,16 @@ class UbisoftHandler:
                 }
             }
         }
+
+    def get_rep_gg_status(self, profile_id: str):
+        try:
+            response = self.statscc_handler.fetch_by_profile_id(profile_id)
+            if response.get("profileBans"):
+                if response.get("profileBans")[0]:
+                    return response.get("profileBans")[0]
+        except Exception as e:
+            logger.error(f"Encountered exception when attempting to fetch info from stats.cc (profile id: {profile_id}). Error: \n\n{e}")
+
 
     def get_twitch_info(self, linked_accounts: List[LinkedAccount]):
         if linked_accounts is None:
