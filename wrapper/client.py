@@ -151,9 +151,14 @@ class UbisoftClient:
         # Build cache key
         key = None
         if self.redis:
-            key_data = {
-                "uid": uid,
-            }
+            if uid:
+                key_data = {
+                    "uid": uid,
+                }
+            elif name:
+                key_data = {
+                    "name": name,
+                }
             key = "player:" + hashlib.sha256(json.dumps(key_data, sort_keys=True).encode()).hexdigest()
 
             # Try Redis cache
