@@ -239,7 +239,7 @@ class UbisoftHandler:
                     mode: self.format_profile(
                         getattr(player, f"{mode}_profile"),
                         add_risk_score=True if mode == "ranked" else False
-                    ) for mode in ["ranked", "standard", "casual", "event", "warmup"]
+                    ) for mode in ["ranked", "standard", "casual", "event", "warmup"] if getattr(player, f"{mode}_profile") is not None
                 }
             }
         }
