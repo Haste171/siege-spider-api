@@ -1,5 +1,5 @@
 from database.handler import get_db
-from database.models import SiegeBan, SiegeBanMetadata
+from database.models import SiegeBan, SiegeBanMetadata, Match
 from fastapi import APIRouter, Depends, Request
 from fastapi.exceptions import HTTPException
 from pydantic import BaseModel
@@ -140,19 +140,23 @@ async def lookup_bans_metadata_profile_id(request: Request, profile_id: str, db:
         )
         raise Exception(e_str)
 
-class PlayerIdentifier(BaseModel):
-    identifiers: List[Dict[str, int]]
+class MatchLookupModel(BaseModel):
+    match_id: str
 
 @router.post("/lookup/match")
 async def lookup_match_players(
         request: Request,
-        data: PlayerIdentifier,
+        data: MatchLookupModel,
         db: Session = Depends(get_db)
 ):
     try:
+        match = db.query(Match).filter(Match.id == data.match_id).first()
+        if not match:
+            raise HTTPException(status_code=404, detail="No match found for the provided match ID!")
+
         ubisoft_handler = request.app.state.ubisoft_handler
         players = []
-        for item in data.identifiers:
+        for item in match.teams:
             for key, value in item.items():
                 player: Player = await ubisoft_handler.lookup_via_profile_id(key)
                 data_to_add = ubisoft_handler.format_player(player)
