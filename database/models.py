@@ -10,6 +10,7 @@ Base = declarative_base()
 class Client(Base):
     __tablename__ = 'client'
     current_version = Column(String, primary_key=True)
+    download_url = Column(String)
 
 class User(Base):
     __tablename__ = "users"

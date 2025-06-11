@@ -6,7 +6,6 @@ from pydantic import BaseModel
 from services.user.token import get_current_user
 from services.webhook_exception_handler import WebhookExceptionHandler
 from sqlalchemy.orm import Session
-from typing import List, Dict
 import logging
 from wrapper.models import Player
 
