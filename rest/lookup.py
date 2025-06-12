@@ -1,13 +1,16 @@
+from collections import defaultdict
 from database.handler import get_db
 from database.models import SiegeBan, SiegeBanMetadata, Match
 from fastapi import APIRouter, Depends, Request
 from fastapi.exceptions import HTTPException
+from itertools import combinations
 from pydantic import BaseModel
 from services.user.token import get_current_user
 from services.webhook_exception_handler import WebhookExceptionHandler
 from sqlalchemy.orm import Session
-import logging
+from typing import List, Dict, Any
 from wrapper.models import Player
+import logging
 
 logger = logging.getLogger(__name__)
 logging.basicConfig(level=logging.INFO)
@@ -171,6 +174,170 @@ async def lookup_match_players(
         )
         raise Exception(e_str)
 
+def get_player_connections_simple(session: Session, match_id: str, min_matches_together: int = 3) -> Dict[str, Any]:
+    """
+    Simplified version that just returns player IDs grouped by who plays together.
+    Perfect for UI display.
+    """
+    result = find_player_groups(session, match_id, min_matches_together)
+
+    if "error" in result:
+        return result
+
+    return {
+        "match_id": match_id,
+        "team_0_groups": [group["players"] for group in result["team_0"]["groups"]],
+        "team_1_groups": [group["players"] for group in result["team_1"]["groups"]]
+    }
+
+
+def find_player_groups(session: Session, match_id: str, min_matches_together: int) -> Dict[str, Any]:
+    """
+    Find groups of players who frequently play together in a specific match.
+    """
+    # Get the specific match
+    target_match = session.query(Match).filter(Match.id == match_id).first()
+    if not target_match:
+        return {"error": f"Match with ID {match_id} not found"}
+
+    # Parse teams from the target match
+    teams_data = target_match.teams
+    team_0_players = []
+    team_1_players = []
+
+    for player_dict in teams_data:
+        for player_id, team in player_dict.items():
+            if team == 0:
+                team_0_players.append(player_id)
+            elif team == 1:
+                team_1_players.append(player_id)
+
+    # Find groups for each team
+    team_0_groups = find_frequent_groups(session, team_0_players, 0, min_matches_together)
+    team_1_groups = find_frequent_groups(session, team_1_players, 1, min_matches_together)
+
+    return {
+        "match_id": match_id,
+        "team_0": {
+            "players": team_0_players,
+            "groups": team_0_groups
+        },
+        "team_1": {
+            "players": team_1_players,
+            "groups": team_1_groups
+        }
+    }
+
+
+def find_frequent_groups(session: Session, team_players: List[str], team_number: int, min_matches_together: int) -> List[Dict[str, Any]]:
+    """
+    Find all groups of players who have played together frequently.
+    Uses connected components to merge groups that share players.
+    """
+    if len(team_players) < 2:
+        return []
+
+    # Get all matches from database
+    all_matches = session.query(Match).all()
+
+    # Build a graph of player connections
+    player_connections = defaultdict(lambda: defaultdict(int))
+
+    for match in all_matches:
+        match_teams = match.teams
+        match_players_on_team = set()
+
+        # Extract players on the same team number from this match
+        for player_dict in match_teams:
+            for player_id, team in player_dict.items():
+                if team == team_number and player_id in team_players:
+                    match_players_on_team.add(player_id)
+
+        # Count connections between all pairs of players in this match
+        if len(match_players_on_team) >= 2:
+            for p1, p2 in combinations(sorted(match_players_on_team), 2):
+                player_connections[p1][p2] += 1
+                player_connections[p2][p1] += 1
+
+    # Find connected components using Union-Find
+    parent = {}
+
+    def find(x):
+        if x not in parent:
+            parent[x] = x
+        if parent[x] != x:
+            parent[x] = find(parent[x])
+        return parent[x]
+
+    def union(x, y):
+        px, py = find(x), find(y)
+        if px != py:
+            parent[px] = py
+
+    # Union players who have played together >= min_matches_together times
+    for player in team_players:
+        find(player)  # Initialize parent
+
+    for player, connections in player_connections.items():
+        for connected_player, match_count in connections.items():
+            if match_count >= min_matches_together:
+                union(player, connected_player)
+
+    # Group players by their root parent (connected component)
+    groups = defaultdict(list)
+    for player in team_players:
+        root = find(player)
+        groups[root].append(player)
+
+    # Convert to final format, only including groups with 2+ players
+    frequent_groups = []
+    for root, players in groups.items():
+        if len(players) >= 2:
+            # Calculate the minimum match count for this group
+            min_group_matches = float('inf')
+            for p1, p2 in combinations(players, 2):
+                match_count = player_connections[p1][p2]
+                if match_count > 0:
+                    min_group_matches = min(min_group_matches, match_count)
+
+            if min_group_matches == float('inf'):
+                min_group_matches = 0
+
+            frequent_groups.append({
+                "players": sorted(players),
+                "matches_together": int(min_group_matches)
+            })
+
+    return frequent_groups
+
+
+@router.post("/lookup/match/team_relationships")
+async def lookup_match_players(
+        request: Request,
+        data: MatchLookupModel,
+        db: Session = Depends(get_db)
+):
+    try:
+        # Get the team relationships
+        relationships = get_player_connections_simple(
+            db,
+            data.match_id,
+            3
+        )
+
+        if "error" in relationships:
+            raise HTTPException(status_code=404, detail=relationships["error"])
+
+        # Return the relationships
+        return {
+            "success": True,
+            "data": relationships
+        }
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Internal server error: {str(e)}")
 @router.get("/bans")
 async def get_all_bans(
         request: Request,
