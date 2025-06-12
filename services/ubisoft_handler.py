@@ -3,12 +3,12 @@ from services.linked_account_parser import LinkedAccountParser
 from services.twitch_handler import TwitchHandler
 from typing import List
 from wrapper.client import UbisoftClient
+from wrapper.helpers import get_rank_from_mmr
 from wrapper.models import LinkedAccount, Player
 from services.statscc_handler import StatsCCHandler
 from services.redis_client import RedisClient
 import asyncio
 import logging
-import os
 import json
 
 load_dotenv()
@@ -21,8 +21,6 @@ class UbisoftHandler:
         self.linked_account_parser = LinkedAccountParser()
         self.twitch_handler = TwitchHandler()
         self.statscc_handler = StatsCCHandler()
-        ubisoft_email = os.getenv("UBISOFT_EMAIL")
-        ubisoft_password = os.getenv("UBISOFT_PASSWORD")
         self.redis_client = RedisClient()
         self.client = None
 
@@ -37,7 +35,9 @@ class UbisoftHandler:
         player = await self.client.get_player(name=uplay, platform="uplay")
         return player
 
-    def format_profile(self, profile, add_risk_score=False):
+    def format_profile(self, profile, add_risk_score=False, get_highest_rank=False, stats_cc_data=None):
+        peak_rank_data = self.get_peak_rank(stats_cc_data) if get_highest_rank else None
+        cheater_risk_score = self.calculate_cheater_risk(profile, peak_rank_data) if add_risk_score else None
         return {
             "max_rank_id": profile.max_rank_id,
             "max_rank": profile.max_rank,
@@ -57,16 +57,18 @@ class UbisoftHandler:
             "losses": profile.losses,
             "win_loss_ratio": profile.wins / profile.losses if profile.losses != 0 else 0.0,
             "abandons": profile.abandons,
-            "risk_score": self.calculate_cheater_risk(profile) if add_risk_score else None
+            "risk_score": cheater_risk_score,
+            "peak_rank_data": peak_rank_data,
         }
 
     @staticmethod
-    def calculate_cheater_risk(profile):
+    def calculate_cheater_risk(profile, peak_rank_data):
         """
         Calculate a risk score (0-100) indicating the likelihood that a player is cheating.
 
         Args:
             profile: Player profile object containing match statistics and rank information
+            peak_rank_data: Player's max rank information
 
         Returns:
             int: Risk score between 0-100, with higher values indicating higher suspicion
@@ -80,7 +82,6 @@ class UbisoftHandler:
         wl_ratio = profile.wins / max(1, profile.losses)
 
         # Extract rank category
-        rank_categories = ["Copper", "Bronze", "Silver", "Gold", "Platinum", "Emerald", "Diamond", "Champions"]
         rank_category = profile.rank.split()[0] if hasattr(profile, 'rank') and profile.rank else "Gold"
 
         # 2. Match count confidence scaling
@@ -141,7 +142,12 @@ class UbisoftHandler:
 
         # 5. Rank Efficiency - FIXED to prevent false positives for high ranks
         starting_points = 1000
-        points_gained = profile.rank_points - starting_points
+
+        if peak_rank_data.get('peak_rank_id'):
+            points_gained = peak_rank_data['peak_rank_id'] - starting_points
+        else:
+            points_gained = profile.rank_points - starting_points
+
         points_per_match = points_gained / max(1, total_matches)
 
         # Improved expected points calculation that scales properly with rank
@@ -195,14 +201,35 @@ class UbisoftHandler:
 
         return int(final_score)
 
+    @staticmethod
+    def get_peak_rank(response):
+        peak_rank_points = 0
+
+        if response.get('seasonalRecords'):
+            for k, seasonal_record in response['seasonalRecords'].items():
+                if seasonal_record.get('ranked'):
+                    ranked_data = seasonal_record['ranked']
+                    if ranked_data['maxRankPoints'] > peak_rank_points:
+                        peak_rank_points = ranked_data['maxRankPoints']
+
+            peak_rank, peak_prev_rank_mmr, peak_next_rank_mmr, peak_rank_id = get_rank_from_mmr(peak_rank_points)
+            return {
+                "peak_rank": peak_rank,
+                "peak_rank_id": peak_rank_id,
+                "peak_rank_points": peak_rank_points,
+            }
+        return None
+
     def format_player(self, player: Player):
+        stats_cc_data = self.get_stats_cc_data(player.id)
+
         return {
             "player": {
                 "name": player.name,
                 "profile_id": player.id,
                 "uuid": player.uid,
                 "profile_pic_url": player.profile_pic_url,
-                "reputation_gg_status": self.get_rep_gg_status(player.id),
+                "reputation_gg_status": self.get_rep_gg_status(stats_cc_data),
                 "r6_tracker_link": f"https://r6.tracker.network/r6siege/profile/ubi/{player.name}/overview",
                 "statscc_link": f"https://stats.cc/siege/{player.name}/{player.id}",
                 "twitch_info": self.get_twitch_info(player.linked_accounts),
@@ -238,32 +265,39 @@ class UbisoftHandler:
                 "stats": {
                     mode: self.format_profile(
                         getattr(player, f"{mode}_profile"),
-                        add_risk_score=True if mode == "ranked" else False
+                        add_risk_score=True if mode == "ranked" else False,
+                        get_highest_rank=True if mode == "ranked" else False,
+                        stats_cc_data=stats_cc_data
                     ) for mode in ["ranked", "standard", "casual", "event", "warmup"] if getattr(player, f"{mode}_profile") is not None
                 }
             }
         }
 
-    def get_rep_gg_status(self, profile_id: str):
-        key = f"repgg:{profile_id}"
+    def get_stats_cc_data(self, profile_id: str):
+        key = f"statscc:{profile_id}"
 
         if self.redis_client:
             cached = self.redis_client.cache_for_key(key, lambda: None)
             if cached:
-                logger.info(f"[repgg] Cache hit on {profile_id}")
-                if cached.get("profileBans"):
-                    result = cached["profileBans"][0]
-                    return result
+                logger.info(f"[statscc] Cache hit on {profile_id}")
+                return cached
 
         try:
             response = self.statscc_handler.fetch_by_profile_id(profile_id)
             if self.redis_client:
                 self.redis_client.redis.setex(key, 900, json.dumps(response))
+            return response
+        except Exception as e:
+            logger.error(f"Encountered exception when attempting to fetch info from stats.cc (profile id: {profile_id}). Error: \n\n{e}")
+
+    @staticmethod
+    def get_rep_gg_status( response):
+        try:
             if response.get("profileBans"):
                 result = response["profileBans"][0]
                 return result
         except Exception as e:
-            logger.error(f"Encountered exception when attempting to fetch info from stats.cc (profile id: {profile_id}). Error: \n\n{e}")
+            logger.error(f"Encountered exception when attempting to fetch info from rpe.gg (STATSCC handler). Error: \n\n{e}")
 
     def get_twitch_info(self, linked_accounts: List[LinkedAccount]):
         if not linked_accounts:
