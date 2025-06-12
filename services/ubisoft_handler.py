@@ -203,6 +203,8 @@ class UbisoftHandler:
 
     @staticmethod
     def get_peak_rank(response):
+        if response is None:
+            return None
         peak_rank_points = 0
 
         if response.get('seasonalRecords'):
