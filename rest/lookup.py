@@ -363,7 +363,12 @@ def get_player_matches_with_summary(session: Session, profile_id: str, page: int
     try:
         # For PostgreSQL JSONB, we can use containment operators or filter in Python
         # Get all matches where teams is not null
-        all_matches = session.query(Match).filter(Match.teams.isnot(None)).all()
+        all_matches = (
+            session.query(Match)
+            .filter(Match.teams.isnot(None))
+            .order_by(Match.created_at.desc()) 
+            .all()
+        )
         matching_matches = []
 
         for match in all_matches:
