@@ -1,16 +1,16 @@
 from collections import defaultdict
 from database.handler import get_db
 from database.models import SiegeBan, SiegeBanMetadata, Match
-from fastapi import APIRouter, Depends, Request
-from fastapi.exceptions import HTTPException
+from fastapi import HTTPException, Depends, Request, APIRouter
 from itertools import combinations
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 from services.user.token import get_current_user
 from services.webhook_exception_handler import WebhookExceptionHandler
 from sqlalchemy.orm import Session
 from typing import List, Dict, Any
 from wrapper.models import Player
 import logging
+import math
 
 logger = logging.getLogger(__name__)
 logging.basicConfig(level=logging.INFO)
@@ -338,6 +338,239 @@ async def lookup_match_players(
         raise
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Internal server error: {str(e)}")
+
+
+class PlayerMatchesLookupModel(BaseModel):
+    """Request model for player matches lookup with pagination."""
+    profile_id: str = Field(..., description="The player's profile ID")
+    page: int = Field(default=1, ge=1, description="Page number (1-indexed)")
+    page_size: int = Field(default=10, ge=1, le=100, description="Number of matches per page")
+
+
+def get_player_matches_with_summary(session: Session, profile_id: str, page: int = 1, page_size: int = 10) -> Dict[str, Any]:
+    """
+    Retrieve all matches for a specific player with pagination and summary statistics.
+
+    Args:
+        session: Database session
+        profile_id: The player's profile ID to search for
+        page: Page number (1-indexed)
+        page_size: Number of matches per page
+
+    Returns:
+        Dictionary containing paginated match data, summary statistics, and metadata
+    """
+    try:
+        # For PostgreSQL JSONB, we can use containment operators or filter in Python
+        # Get all matches where teams is not null
+        all_matches = session.query(Match).filter(Match.teams.isnot(None)).all()
+        matching_matches = []
+
+        for match in all_matches:
+            teams_data = match.teams
+            player_found = False
+
+            # Search through the teams structure to find the profile_id
+            if teams_data and isinstance(teams_data, list):
+                for player_dict in teams_data:
+                    if isinstance(player_dict, dict) and profile_id in player_dict:
+                        player_found = True
+                        break
+
+            if player_found:
+                matching_matches.append(match)
+
+        # Calculate pagination values
+        total_matches = len(matching_matches)
+        total_pages = math.ceil(total_matches / page_size) if total_matches > 0 else 1
+        offset = (page - 1) * page_size
+
+        # Validate page number
+        if page > total_pages and total_matches > 0:
+            return {
+                "error": f"Page {page} does not exist. Total pages: {total_pages}"
+            }
+
+        # Get the paginated slice
+        paginated_matches = matching_matches[offset:offset + page_size]
+
+        # Process all matches to calculate summary statistics and format data
+        all_matches_data = []
+        team_0_count = 0
+        team_1_count = 0
+        wins = 0
+        losses = 0
+
+        for match in matching_matches:
+            # Determine which team the player was on
+            player_team = None
+            teams_data = match.teams
+
+            if teams_data and isinstance(teams_data, list):
+                for player_dict in teams_data:
+                    if isinstance(player_dict, dict) and profile_id in player_dict:
+                        player_team = player_dict[profile_id]
+                        break
+
+            # Count team distribution
+            if player_team == 0:
+                team_0_count += 1
+            elif player_team == 1:
+                team_1_count += 1
+
+            # Count wins and losses
+            if hasattr(match, 'winner') and match.winner is not None:
+                if match.winner == player_team:
+                    wins += 1
+                else:
+                    losses += 1
+
+            match_data = {
+                "match_id": match.id,
+                "player_team": player_team,
+                "created_at": match.created_at.isoformat() if hasattr(match, 'created_at') and match.created_at else None,
+                "teams": teams_data
+            }
+
+            # Add any other relevant match fields
+            if hasattr(match, 'status'):
+                match_data["status"] = match.status
+            if hasattr(match, 'duration'):
+                match_data["duration"] = match.duration
+            if hasattr(match, 'winner'):
+                match_data["winner"] = match.winner
+
+            all_matches_data.append(match_data)
+
+        # Get paginated slice for current page
+        paginated_matches = all_matches_data[offset:offset + page_size]
+
+        # Calculate win rate
+        win_rate = (wins / (wins + losses)) * 100 if (wins + losses) > 0 else 0.0
+
+        return {
+            "profile_id": profile_id,
+            "matches": paginated_matches,
+            "pagination": {
+                "current_page": page,
+                "page_size": page_size,
+                "total_matches": total_matches,
+                "total_pages": total_pages,
+                "has_next": page < total_pages,
+                "has_previous": page > 1
+            },
+            "summary": {
+                "total_matches": total_matches,
+                "team_0_matches": team_0_count,
+                "team_1_matches": team_1_count,
+                "wins": wins,
+                "losses": losses,
+                "win_rate": round(win_rate, 2)
+            }
+        }
+
+    except Exception as e:
+        return {"error": f"Database error: {str(e)}"}
+
+
+@router.post("/lookup/matches/profile_id")
+async def lookup_player_matches(
+        request: Request,
+        data: PlayerMatchesLookupModel,
+        db: Session = Depends(get_db)
+):
+    """
+    Retrieve all matches played by a specific player with pagination and summary statistics.
+
+    This endpoint searches through the match database to find all games
+    where the specified profile ID participated, returning paginated match results
+    along with comprehensive summary statistics including wins, losses, team
+    distribution, and win rate calculations.
+    """
+    try:
+        # Validate input
+        if not data.profile_id.strip():
+            raise HTTPException(status_code=400, detail="Profile ID cannot be empty")
+
+        # Get the player's matches with summary statistics
+        result = get_player_matches_with_summary(
+            db,
+            data.profile_id.strip(),
+            data.page,
+            data.page_size
+        )
+
+        if "error" in result:
+            if "does not exist" in result["error"]:
+                raise HTTPException(status_code=404, detail=result["error"])
+            else:
+                raise HTTPException(status_code=500, detail=result["error"])
+
+        # Return the paginated results with summary statistics
+        return {
+            "success": True,
+            "data": result
+        }
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Internal server error: {str(e)}")
+
+class PlayerNameMatchesLookupModel(BaseModel):
+    """Request model for player matches lookup with pagination."""
+    name: str = Field(..., description="The player's profile uplay username")
+    page: int = Field(default=1, ge=1, description="Page number (1-indexed)")
+    page_size: int = Field(default=10, ge=1, le=100, description="Number of matches per page")
+
+@router.post("/lookup/matches/name")
+async def lookup_player_matches(
+        request: Request,
+        data: PlayerNameMatchesLookupModel,
+        db: Session = Depends(get_db)
+):
+    """
+    Retrieve all matches played by a specific player with pagination and summary statistics.
+
+    This endpoint searches through the match database to find all games
+    where the specified profile ID participated, returning paginated match results
+    along with comprehensive summary statistics including wins, losses, team
+    distribution, and win rate calculations.
+    """
+    try:
+        # Validate input
+        if not data.name.strip():
+            raise HTTPException(status_code=400, detail="Name cannot be empty")
+
+        ubisoft_handler = request.app.state.ubisoft_handler
+
+        player: Player = await ubisoft_handler.lookup_via_uplay(data.name.strip())
+
+        # Get the player's matches with summary statistics
+        result = get_player_matches_with_summary(
+            db,
+            player.uid,
+            data.page,
+            data.page_size
+        )
+
+        if "error" in result:
+            if "does not exist" in result["error"]:
+                raise HTTPException(status_code=404, detail=result["error"])
+            else:
+                raise HTTPException(status_code=500, detail=result["error"])
+
+        # Return the paginated results with summary statistics
+        return {
+            "success": True,
+            "data": result
+        }
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Internal server error: {str(e)}")
+
 @router.get("/bans")
 async def get_all_bans(
         request: Request,
