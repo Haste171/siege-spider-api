@@ -35,7 +35,8 @@ async def lifespan(app: FastAPI):
     app.state.ubisoft_handler = ubisoft_handler
 
     # Start ban listener
-    task = asyncio.create_task(run_ban_websocket_listener(ubisoft_handler))
+    # task = asyncio.create_task(run_ban_websocket_listener(ubisoft_handler))
+    task = None
     try:
         yield
     finally:
@@ -56,6 +57,11 @@ async def root():
 
 from rest.user import router as user_router
 from rest.lookup import router as lookup_router
+from rest.ingest import router as ingest_router
+from rest.client import router as client_router
 
 app.include_router(user_router)
 app.include_router(lookup_router)
+app.include_router(ingest_router)
+app.include_router(client_router)
+

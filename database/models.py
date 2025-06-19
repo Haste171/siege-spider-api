@@ -1,10 +1,16 @@
 from sqlalchemy import Column, String, Integer, Boolean, ForeignKey, ARRAY, DateTime
+from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.ext.declarative import declarative_base
 from sqlalchemy.orm import relationship
 from sqlalchemy.sql import func
 import uuid
 
 Base = declarative_base()
+
+class Client(Base):
+    __tablename__ = 'client'
+    current_version = Column(String, primary_key=True)
+    download_url = Column(String)
 
 class User(Base):
     __tablename__ = "users"
@@ -19,6 +25,17 @@ class User(Base):
 #     id = Column(String, primary_key=True, default=lambda: str(uuid.uuid4()), unique=True, index=True)
 #     created_at = Column(DateTime(timezone=True), server_default=func.now())
 #     updated_at = Column(DateTime(timezone=True), onupdate=func.now())
+
+class Match(Base):
+    __tablename__ = "matches"
+
+    id = Column(String, primary_key=True, default=lambda: str(uuid.uuid4()), unique=True, index=True, nullable=False)
+    teams = Column(JSONB, nullable=False)  # Storing as JSON array of dicts
+    signature = Column(String, nullable=True, index=True)
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
+    updated_at = Column(DateTime(timezone=True), onupdate=func.now())
+    created_by_host = Column(String)
+
 
 class SiegeBan(Base):
     __tablename__ = "siege_bans"
