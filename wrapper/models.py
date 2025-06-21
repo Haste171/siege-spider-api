@@ -102,4 +102,3 @@ class Player:
     warmup_profile: Optional[FullProfile]
     event_profile: Optional[FullProfile]
 
-    current_platform_info: CurrentPlatformInfo

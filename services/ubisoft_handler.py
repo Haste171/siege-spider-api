@@ -235,7 +235,6 @@ class UbisoftHandler:
                 "r6_tracker_link": f"https://r6.tracker.network/r6siege/profile/ubi/{player.name}/overview",
                 "statscc_link": f"https://stats.cc/siege/{player.name}/{player.id}",
                 "twitch_info": self.get_twitch_info(player.linked_accounts),
-                "current_platform_info": player.current_platform_info,
                 "linked_accounts": [
                     {
                         "profile_id": acc.profile_id,

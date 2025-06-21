@@ -145,7 +145,6 @@ class UbisoftClient:
          uid: Optional[str] = None,
          platform: Literal["uplay", "xbl", "psn"] = "uplay",
          get_twitch: bool = True,
-         get_current_platform: bool = True
     ) -> Player:
 
         # Build cache key
@@ -191,9 +190,6 @@ class UbisoftClient:
             playtime_data = await self.get_playtime(profile_id)
             progress_data = await self.get_progress(profile_id)
             ranked_profiles_data = await self.get_ranked_profiles(profile_id, platform)
-            current_platform_info = None
-            if get_current_platform:
-                current_platform_info = await self.get_current_platform_info(profile_id)
 
             model = Player(
                 id=profile_id,
@@ -219,7 +215,6 @@ class UbisoftClient:
                 casual_profile=ranked_profiles_data.casual_profile,
                 warmup_profile=ranked_profiles_data.warmup_profile,
                 event_profile=ranked_profiles_data.event_profile,
-                current_platform_info=current_platform_info
             )
 
             if self.redis and key:
@@ -265,7 +260,6 @@ class UbisoftClient:
             casual_profile=FullProfile(**data["casual_profile"]) if data["casual_profile"] else None,
             warmup_profile=FullProfile(**data["warmup_profile"]) if data["warmup_profile"] else None,
             event_profile=FullProfile(**data["event_profile"]) if data["event_profile"] else None,
-            current_platform_info=CurrentPlatformInfo(**data["current_platform_info"]) if data["current_platform_info"] else None,
         )
 
 

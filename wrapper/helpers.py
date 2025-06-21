@@ -130,5 +130,4 @@ def deserialize_player(data: dict) -> Player:
         casual_profile=FullProfile(**data["casual_profile"]) if data["casual_profile"] else None,
         warmup_profile=FullProfile(**data["warmup_profile"]) if data["warmup_profile"] else None,
         event_profile=FullProfile(**data["event_profile"]) if data["event_profile"] else None,
-        current_platform_info=CurrentPlatformInfo(**data["current_platform_info"]) if data["current_platform_info"] else None,
     )
