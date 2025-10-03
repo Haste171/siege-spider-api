@@ -19,19 +19,3 @@ You are currently looing at the **API**.
 
 ## V2 Preview
 <img width="2105" height="1698" alt="image" src="https://github.com/user-attachments/assets/b1e0ea0e-5e16-47d4-a70d-a15faedcd9a2" />
-
-
-
-# Alembic
-
-### Add Revision
-
-```shell
-alembic revision --autogenerate -m "add profile id"
-```
-
-### Upgrade to Latest Revision
-
-```shell
-alembic upgrade head
-```
